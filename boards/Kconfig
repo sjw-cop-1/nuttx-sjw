@@ -3035,6 +3035,18 @@ config ARCH_BOARD_STM3210E_EVAL
 		microcontroller (ARM Cortex-M3).  This port uses the GNU Cortex-M3
 		toolchain.
 
+config ARCH_BOARD_M144Z_M3
+	bool "ALIENTEK M144Z-M3 (STM32F103ZET6) minimum system board"
+	depends on ARCH_CHIP_STM32F103ZE
+	select ARCH_HAVE_LEDS
+	select ARCH_HAVE_BUTTONS
+	select ARCH_HAVE_IRQBUTTONS
+	---help---
+		ALIENTEK (正点原子) M144Z-M3 minimum system board based on the
+		STM32F103ZET6 microcontroller (ARM Cortex-M3).  The board has an
+		8MHz HSE crystal, USART1 (PA9/PA10) routed to a CH340C USB serial,
+		LED0 on PB5, LED1 on PE5 and KEY0 on PE4.
+
 config ARCH_BOARD_STM3220G_EVAL
 	bool "STMicro STM3220G-EVAL development board"
 	depends on ARCH_CHIP_STM32F207IG
@@ -4150,6 +4162,7 @@ config ARCH_BOARD
 	default "stm32f103-minimum"            if ARCH_BOARD_STM32F103_MINIMUM
 	default "stm32f411-minimum"            if ARCH_BOARD_STM32F411_MINIMUM
 	default "stm3210e-eval"                if ARCH_BOARD_STM3210E_EVAL
+	default "m144z-m3"                     if ARCH_BOARD_M144Z_M3
 	default "stm3220g-eval"                if ARCH_BOARD_STM3220G_EVAL
 	default "stm3240g-eval"                if ARCH_BOARD_STM3240G_EVAL
 	default "stm32f3discovery"             if ARCH_BOARD_STM32F3_DISCOVERY
@@ -4987,6 +5000,9 @@ source "boards/arm/stm32f2/photon/Kconfig"
 endif
 if ARCH_BOARD_SHENZHOU
 source "boards/arm/stm32f1/shenzhou/Kconfig"
+endif
+if ARCH_BOARD_M144Z_M3
+source "boards/arm/stm32f1/m144z-m3/Kconfig"
 endif
 if ARCH_BOARD_STM3210E_EVAL
 source "boards/arm/stm32f1/stm3210e-eval/Kconfig"
