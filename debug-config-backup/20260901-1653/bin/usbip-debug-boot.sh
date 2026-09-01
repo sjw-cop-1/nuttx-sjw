@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # 开机自动(由 /etc/wsl.conf [boot] 调用, root 运行):
+#   0) 同步系统时钟(WSL2 无 systemd/NTP, Windows 睡眠恢复后会漂, 导致 make
+#      报 "Clock skew detected")
 #   1) 挂载 usbipd-win 的 WSL 侧载目录(usbipd 自己挂载会失败, 需手动)
 #   2) 后台循环: 调用 ~/bin/jlink-attach.sh 保证 J-Link 透传(按 VID:PID 找
 #      busid, 换 USB 口也不怕; 已透传则秒退)
@@ -10,6 +12,15 @@
 #     也会兜底把 J-Link 拉进来。
 # =============================================================================
 sleep 5
+
+# 0) 时钟同步(等网络就绪; -b 强制步进, -s 静默, 失败不阻塞后续)
+for i in 1 2 3 4 5; do
+  ntpdate -u -b -s ntp.aliyun.com && break
+  sleep 3
+done
+# 后台: 每 30 分钟再同步一次(应对长时间运行 + 主机睡眠恢复)
+nohup sh -c 'while true; do sleep 1800; ntpdate -u -b -s ntp.aliyun.com 2>/dev/null; done' \
+  >/dev/null 2>&1 &
 
 mkdir -p /usr/lib/usbipd-win
 mountpoint -q /usr/lib/usbipd-win || \
