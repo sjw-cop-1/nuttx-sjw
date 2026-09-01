@@ -20,6 +20,39 @@
  *
  ****************************************************************************/
 
+/* ===========================================================================
+ * 【这个文件是什么】
+ *   GNU ld 链接脚本。链接阶段 (boards/.../scripts/Make.defs 里 ARCHSCRIPT
+ *   指定它) 用来决定：
+ *     - 目标芯片有哪些内存区、各自地址和大小 (MEMORY 块)
+ *     - 各输入段 (.text/.data/.bss/...) 放进哪个内存区、按什么顺序排列
+ *     - 生成一批“边界符号”(_stext/_sdata/_ebss ...)，供启动代码使用
+ *   产物就是根目录的 nuttx (ELF)，再由 objcopy 转成 nuttx.bin / nuttx.hex。
+ *
+ * 【关键概念：VMA vs LMA】
+ *   VMA(运行地址) = 程序运行时该段所在的地址
+ *   LMA(加载地址) = 该段的初始内容被烧进 Flash 的地址
+ *   对 .text/.rodata：VMA == LMA，都在 Flash，原地执行(XIP)。
+ *   对 .data       ：VMA 在 SRAM、LMA 在 Flash —— 启动代码负责把初值从
+ *                    Flash 搬到 SRAM。
+ *   对 .bss        ：只有 VMA(SRAM)，没有内容，启动代码清零即可。
+ *
+ * 【谁消费这里定义的符号】
+ *   arch/arm/src/common/stm32/stm32_start_m3m4_v1.c 的 __start()：
+ *     - 用 _sbss/_ebss           清零 .bss
+ *     - 用 _eronly/_sdata/_edata 把 .data 从 Flash 拷到 SRAM
+ *   arch/arm/src/armv7-m/ 及 libc 启动逻辑：
+ *     - 用 _sinit/_einit         遍历并调用 C++ 全局构造函数
+ *     - 用 __exidx_start/_end    支持 C++ 异常展开 / 栈回溯
+ * ===========================================================================
+ */
+
+/* STM32F103ZET6：512KB Flash 起始于 0x0800:0000，64KB SRAM 起始于
+ * 0x2000:0000。从 Flash 启动时，Flash 被映射(别名)到 0x0000:0000，
+ * CPU 上电后从那里取“初始 SP / 复位向量”，随后跳到 0x0800:0000 区间内的
+ * 真实入口开始执行。
+ */
+
 /* The STM32F103ZET6 has 512Kb of FLASH beginning at address 0x0800:0000 and
  * 64Kb of SRAM beginning at address 0x2000:0000.  When booting from FLASH,
  * FLASH memory is aliased to address 0x0000:0000 where the code expects to
@@ -27,32 +60,51 @@
  * range.
  */
 
+/* 定义芯片的物理内存区。属性位含义：
+ *   r = 可读, w = 可写, x = 可执行 —— 仅供 ld 做越界/属性检查，不影响 MPU。
+ * 这两行的地址和大小必须与 STM32F103ZET6 数据手册一致，也要与
+ * boards/.../include/board.h 的时钟、CONFIG_RAM_START/CONFIG_RAM_SIZE 对得上。
+ */
+
 MEMORY
 {
-  flash (rx) : ORIGIN = 0x08000000, LENGTH = 512K
-  sram (rwx) : ORIGIN = 0x20000000, LENGTH = 64K
+  flash (rx) : ORIGIN = 0x08000000, LENGTH = 512K   /* 片内 Flash：代码 + 只读数据 + .data 初值 */
+  sram (rwx) : ORIGIN = 0x20000000, LENGTH = 64K    /* 片内 SRAM：.data + .bss + 堆 + 栈 */
 }
 
-OUTPUT_ARCH(arm)
-EXTERN(_vectors)
-ENTRY(_stext)
+OUTPUT_ARCH(arm)          /* 目标体系结构：ARM */
+EXTERN(_vectors)          /* 强制把 _vectors(中断向量表, 在 armv7-m/arm_vectors.c)
+                           * 链接进来。即使开了 --gc-sections、没有代码显式引用它，
+                           * 也不能被当作“无用段”丢弃 —— 它必须在 Flash 最前面。 */
+ENTRY(_stext)             /* ELF 入口点(给调试器/加载器看)。真正的上电启动是
+                           * 硬件从向量表读复位地址 → __start()，二者不冲突。 */
+
 SECTIONS
 {
+    /* ---- .text：代码 + 只读数据，全部放 Flash，原地执行 ---- */
+
     .text : {
-        _stext = ABSOLUTE(.);
-        *(.vectors)
-        *(.text .text.*)
+        _stext = ABSOLUTE(.);      /* 代码段起始地址 = 0x08000000 */
+        *(.vectors)                /* ★ 中断向量表必须排在最前：CPU 上电就从这里
+                                    *   取 [0]=初始MSP、[1]=复位入口。 */
+        *(.text .text.*)           /* 所有函数机器码 */
         *(.fixup)
         *(.gnu.warning)
-        *(.rodata .rodata.*)
+        *(.rodata .rodata.*)       /* 常量、字符串字面量、只读全局变量、查找表 */
         *(.gnu.linkonce.t.*)
-        *(.glue_7)
+        *(.glue_7)                 /* ARM/Thumb 互调用的跳转桩(veneer) */
         *(.glue_7t)
-        *(.got)
-        *(.gcc_except_table)
+        *(.got)                    /* 全局偏移表(位置无关代码用；裸机一般很小) */
+        *(.gcc_except_table)       /* C++ 异常处理用的表 */
         *(.gnu.linkonce.r.*)
-        _etext = ABSOLUTE(.);
+        _etext = ABSOLUTE(.);      /* 代码段结束地址 */
     } > flash
+
+    /* ---- .init_section：C++ 全局对象的构造函数指针数组 ---- */
+    /* KEEP() 阻止 --gc-sections 把它回收。启动时会遍历 _sinit.._einit 之间
+     * 的每个函数指针并逐一调用，完成全局/静态 C++ 对象的构造。
+     * SORT_BY_INIT_PRIORITY 保证带优先级的构造函数按序执行。
+     */
 
     .init_section : ALIGN(4) {
         _sinit = ABSOLUTE(.);
@@ -61,15 +113,23 @@ SECTIONS
         _einit = ABSOLUTE(.);
     } > flash
 
+    /* ---- ARM 异常展开(unwind)表：C++ throw / 栈回溯(backtrace) 需要 ---- */
+
     .ARM.extab : ALIGN(4) {
-        *(.ARM.extab*)
+        *(.ARM.extab*)                    /* 展开指令表 */
     } > flash
 
     .ARM.exidx : ALIGN(4) {
-        __exidx_start = ABSOLUTE(.);
-        *(.ARM.exidx*)
+        __exidx_start = ABSOLUTE(.);      /* 供 libgcc / backtrace 代码定位表范围 */
+        *(.ARM.exidx*)                    /* 函数地址 → 展开信息 的索引表 */
         __exidx_end = ABSOLUTE(.);
     } > flash
+
+    /* ---- 线程本地存储(TLS)的“模板” ---- */
+    /* .tdata = 有初值的 TLS 变量模板，.tbss = 初值为 0 的 TLS 变量模板。
+     * 这里只是把模板放在 Flash；NuttX 为每个任务在其任务栈里放一份 TLS 副本
+     * (见 CONFIG_TLS_* 与 sched/tls)。
+     */
 
     .tdata : {
         _stdata = ABSOLUTE(.);
@@ -83,27 +143,51 @@ SECTIONS
         _etbss = ABSOLUTE(.);
     } > flash
 
-    _eronly = ABSOLUTE(.);
+    _eronly = ABSOLUTE(.);   /* ★ “只读内容结束”标记。此地址(在 Flash 中)就是
+                              *   下面 .data 段初值的存放起点(LMA)。
+                              *   __start() 从 _eronly 开始，把 (_edata-_sdata)
+                              *   字节拷到 SRAM 的 _sdata 处。 */
+
+    /* STM32F103Z 的 64KB SRAM 从下面这个地址开始 */
 
     /* The STM32F103Z has 64Kb of SRAM beginning at the following address */
 
+    /* ---- .data：有非零初值的全局/静态变量 ---- */
+    /* “> sram AT > flash” 的含义：
+     *   > sram    段的运行地址(VMA)在 SRAM —— 变量运行时住在这里
+     *   AT > flash 段的加载地址(LMA)在 Flash —— 初值烧在 Flash 里(紧跟 _eronly)
+     * 所以 nuttx.bin 里 .data 占空间，但运行前必须由启动代码搬进 SRAM。
+     */
+
     .data : ALIGN(4) {
-        _sdata = ABSOLUTE(.);
+        _sdata = ABSOLUTE(.);      /* .data 在 SRAM 中的起始(拷贝目的地) */
         *(.data .data.*)
         *(.gnu.linkonce.d.*)
-        CONSTRUCTORS
+        CONSTRUCTORS               /* (a.out 遗留机制，ELF 下基本为空) */
         . = ALIGN(4);
-        _edata = ABSOLUTE(.);
+        _edata = ABSOLUTE(.);      /* .data 在 SRAM 中的结束 */
     } > sram AT > flash
 
+    /* ---- .bss：无初值 / 初值为 0 的全局变量 ---- */
+    /* 不占 Flash(nuttx.bin 里没有它的内容)，只在 SRAM 里占位。
+     * __start() 负责把 _sbss.._ebss 之间清零。
+     * .bss 之后剩下的 SRAM 交给内核堆(up_allocate_heap)和各任务栈使用。
+     */
+
     .bss : ALIGN(4) {
-        _sbss = ABSOLUTE(.);
+        _sbss = ABSOLUTE(.);      /* 待清零区间起始 */
         *(.bss .bss.*)
         *(.gnu.linkonce.b.*)
-        *(COMMON)
+        *(COMMON)                 /* 未加 static 的“暂定定义”变量 */
         . = ALIGN(4);
-        _ebss = ABSOLUTE(.);
+        _ebss = ABSOLUTE(.);     /* 待清零区间结束 */
     } > sram
+
+    /* ---- 调试信息段：地址写 0，且不 “> region” ---- */
+    /* 表示这些段不参与内存布局、不进固件(nuttx.bin/.hex)，只保留在 nuttx
+     * 这个 ELF 文件里，供 gdb / addr2line / J-Link 做源码级调试和符号解析。
+     * 对应 CONFIG_DEBUG_SYMBOLS=y 时产生的 DWARF 等信息。
+     */
 
     /* Stabs debugging sections. */
 
