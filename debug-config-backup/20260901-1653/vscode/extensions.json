@@ -1,0 +1,15 @@
+{
+  // 打开工作区时 VS Code 会提示"安装推荐扩展"
+  // 在 Remote-WSL 窗口里点安装,扩展会装进 WSL 端
+  "recommendations": [
+    "ms-vscode-remote.remote-wsl",      // Remote - WSL
+    "ms-vscode.cpptools",               // C/C++ (IntelliSense / cppdbg)
+    "marus25.cortex-debug",             // Cortex-Debug (主调试器)
+    "mcu-debug.debug-tracker-vscode",   // Cortex-Debug 依赖(会话状态跟踪)
+    "mcu-debug.memory-view",            // 内存面板(0x20000000 SRAM 等)
+    "mcu-debug.peripheral-viewer",      // SVD 外设寄存器面板
+    "mcu-debug.rtos-views",             // RTOS 线程/队列视图(配合 nxgdb)
+    "ms-vscode.makefile-tools"          // NuttX Makefile 感知(可选)
+  ],
+  "unwantedRecommendations": []
+}

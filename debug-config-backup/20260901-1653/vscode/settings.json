@@ -1,0 +1,32 @@
+{
+  // 编译任务(preLaunchTask)报错时直接中止,不弹"仍要调试吗"
+  "debug.onTaskErrors": "abort",
+
+  // Cortex-Debug: 指定 WSL 内的工具链 / gdb(没有 arm-none-eabi-gdb)
+  "cortex-debug.armToolchainPath": "/usr/bin",
+  "cortex-debug.gdbPath": "/usr/bin/gdb-multiarch",
+  "cortex-debug.JLinkGDBServerPath": "/usr/local/bin/JLinkGDBServerCLI",
+  "cortex-debug.variableUseNaturalFormat": true,
+
+  "C_Cpp.default.configurationProvider": "ms-vscode.cpptools",
+  "C_Cpp.errorSquiggles": "enabledIfIncludesResolve",
+
+  "search.exclude": {
+    "staging": true,
+    "nuttx": true,
+    "nuttx.map": true,
+    "System.map": true,
+    "nuttx.hex": true,
+    "nuttx.bin": true,
+    "**/*.o": true,
+    "**/*.a": true,
+    "**/.depend": true
+  },
+  "files.exclude": {
+    "staging": true
+  },
+  "files.associations": {
+    "*.defs": "makefile",
+    "ld.script": "linkerscript"
+  }
+}

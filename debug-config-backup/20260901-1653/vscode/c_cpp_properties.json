@@ -1,0 +1,46 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "NuttX (m144z-m3 / cortex-m3)",
+
+      // 首选: 由 compile_commands.json 提供每个文件的精确 -I / -D / -std
+      // 生成方式: 跑一次任务 "NuttX: 生成 compile_commands.json"
+      "compileCommands": "${workspaceFolder}/compile_commands.json",
+
+      "compilerPath": "/usr/bin/arm-none-eabi-gcc",
+      "compilerArgs": ["-mcpu=cortex-m3", "-mthumb", "-mfloat-abi=soft"],
+      "cStandard": "gnu17",
+      "cppStandard": "gnu++17",
+      "intelliSenseMode": "linux-gcc-arm",
+
+      // 让宏(CONFIG_*)在没有 compile_commands 时也能解析,跳转内核头文件
+      "forcedInclude": ["${workspaceFolder}/include/nuttx/config.h"],
+
+      // compile_commands 未生成时的兜底 includePath
+      "includePath": [
+        "${workspaceFolder}/include",
+        "${workspaceFolder}/arch/arm/src/chip",
+        "${workspaceFolder}/arch/arm/src/common",
+        "${workspaceFolder}/arch/arm/src/armv7-m",
+        "${workspaceFolder}/arch/arm/include",
+        "${workspaceFolder}/sched",
+        "${workspaceFolder}/libs/libc",
+        "${workspaceFolder}/boards/arm/stm32f1/m144z-m3/include",
+        "${workspaceFolder}/../apps/include"
+      ],
+      "defines": [
+        "__NuttX__",
+        "__KERNEL__"
+      ],
+
+      "browse": {
+        "path": [
+          "${workspaceFolder}",
+          "${workspaceFolder}/../apps"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      }
+    }
+  ]
+}
