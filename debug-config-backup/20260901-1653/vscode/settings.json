@@ -6,7 +6,10 @@
   "cortex-debug.armToolchainPath": "/usr/bin",
   "cortex-debug.gdbPath": "/usr/bin/gdb-multiarch",
   "cortex-debug.JLinkGDBServerPath": "/usr/local/bin/JLinkGDBServerCLI",
-  "cortex-debug.variableUseNaturalFormat": true,
+  // 变量 / 寄存器用十六进制显示(false = 十六进制, true = 十进制"自然"格式)。
+  // 也可调试时在 VARIABLES 面板右键 → "Cortex-Debug: Toggle Variable Display Mode" 临时切换。
+  "cortex-debug.variableUseNaturalFormat": false,
+  "cortex-debug.registerUseNaturalFormat": false,
 
   "C_Cpp.default.configurationProvider": "ms-vscode.cpptools",
   "C_Cpp.errorSquiggles": "enabledIfIncludesResolve",
