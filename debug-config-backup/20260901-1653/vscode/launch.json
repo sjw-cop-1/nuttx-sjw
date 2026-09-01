@@ -36,9 +36,21 @@
       "toolchainPrefix": "arm-none-eabi",
       "serverArgs": ["-speed", "4000", "-localhostonly", "1"],
 
-      // 复位/烧录后跑到这里停下。NuttX 启动链:
-      //   __start(复位向量) → nx_start(内核初始化) → 创建 init 任务 → nsh_main
-      "runToEntryPoint": "nsh_main",
+      // 复位/烧录后停在这里 —— 从最开始的 C 启动流程看起。
+      //   __start()  arch/arm/src/common/stm32/stm32_start_m3m4_v1.c:114
+      //     ├─ mpu_early_reset()
+      //     ├─ stm32_clockconfig()     系统时钟/PLL (72MHz)
+      //     ├─ stm32_lowsetup()        基础 UART
+      //     ├─ stm32_gpioinit()
+      //     ├─ 清 .bss / 从 Flash 拷 .data 到 SRAM     ← 之前全局变量是垃圾值
+      //     ├─ arm_earlyserialinit()   串口能 printf 了
+      //     ├─ stm32_boardinitialize() 板级(含 LED 初始化)
+      //     └─ nx_start()              内核初始化 → 创建 init 任务 → nsh_main
+      //
+      // 想停在别处就改这里: "nx_start"(内核入口) / "nsh_main"(你的 main)。
+      // 想停在 __start 的“第一条汇编指令”(prologue 之前),把这行删掉,
+      //   改用 preLaunchCommands 里加  "break *__start"。
+      "runToEntryPoint": "__start",
 
       "preLaunchCommands": [
         "set mem inaccessible-by-default off"
@@ -98,6 +110,8 @@
       "setupCommands": [
         { "text": "set pagination off", "ignoreFailures": true },
         { "text": "set mem inaccessible-by-default off", "ignoreFailures": true },
+        // 变量 / 数值默认按十六进制显示
+        { "text": "set output-radix 16", "ignoreFailures": true },
         { "text": "-file-symbol-file ${workspaceFolder}/nuttx", "ignoreFailures": true },
         { "text": "source ${workspaceFolder}/tools/pynuttx/gdbinit.py", "ignoreFailures": true }
       ],
@@ -109,7 +123,7 @@
         { "text": "set $sp = {unsigned int}0x08000000", "ignoreFailures": true },
         { "text": "set $pc = {unsigned int}0x08000004", "ignoreFailures": true },
         { "text": "flushregs", "ignoreFailures": true },
-        { "text": "tbreak nsh_main", "ignoreFailures": true },
+        { "text": "tbreak __start", "ignoreFailures": true },
         { "text": "-exec-continue", "ignoreFailures": true }
       ],
 
