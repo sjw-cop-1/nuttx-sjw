@@ -1,0 +1,35 @@
+{
+  // 编译任务(preLaunchTask)报错时直接中止,不弹"仍要调试吗"
+  "debug.onTaskErrors": "abort",
+
+  // Cortex-Debug: 指定 WSL 内的工具链 / gdb(没有 arm-none-eabi-gdb)
+  "cortex-debug.armToolchainPath": "/usr/bin",
+  "cortex-debug.gdbPath": "/usr/bin/gdb-multiarch",
+  "cortex-debug.JLinkGDBServerPath": "/usr/local/bin/JLinkGDBServerCLI",
+  // 变量 / 寄存器用十六进制显示(false = 十六进制, true = 十进制"自然"格式)。
+  // 也可调试时在 VARIABLES 面板右键 → "Cortex-Debug: Toggle Variable Display Mode" 临时切换。
+  "cortex-debug.variableUseNaturalFormat": false,
+  "cortex-debug.registerUseNaturalFormat": false,
+
+  "C_Cpp.default.configurationProvider": "ms-vscode.cpptools",
+  "C_Cpp.errorSquiggles": "enabledIfIncludesResolve",
+
+  "search.exclude": {
+    "staging": true,
+    "nuttx": true,
+    "nuttx.map": true,
+    "System.map": true,
+    "nuttx.hex": true,
+    "nuttx.bin": true,
+    "**/*.o": true,
+    "**/*.a": true,
+    "**/.depend": true
+  },
+  "files.exclude": {
+    "staging": true
+  },
+  "files.associations": {
+    "*.defs": "makefile",
+    "ld.script": "linkerscript"
+  }
+}

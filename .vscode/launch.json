@@ -1,0 +1,135 @@
+{
+  "version": "0.2.0",
+
+  // ============================================================================
+  //  路径小知识: VS Code 打开的是  /home/nuttx/nuttxspace/nuttx  (NuttX 仓库根)
+  //    => ${workspaceFolder} = /home/nuttx/nuttxspace/nuttx
+  //    => 编译出的 ELF 也叫 nuttx  =>  "${workspaceFolder}/nuttx"  (双 nuttx 正确)
+  //
+  //  ！！这块板子的硬件问题！！(已用寄存器级调试确认)
+  //    每次复位后 PC = 0x1FFFFxxx,即 STM32F103 的出厂 DFU bootloader。
+  //    原因: BOOT0 引脚 = 高电平。F103 没有"强制从 Flash 启动"的选项字节,
+  //    BOOT0 引脚电平是唯一开关。=> 你烧进去的固件根本不执行。
+  //
+  //    治本: 把开发板 RESET 键旁的 BOOT0 跳线帽拨到 GND 侧(B0 → GND)。
+  //    修好前的兜底: 下面 overrideLaunchCommands / overrideResetCommands
+  //    在复位后手动把 SP/PC 从 Flash 向量表(0x08000000)载入,绕过 bootloader。
+  //    ⚠ 兜底只在调试时有效; 拔掉 J-Link 单独上电, 板子仍进 bootloader、
+  //      LED 代码不跑。BOOT0 跳线修好后请删掉这两段 override。
+  // ============================================================================
+
+  "configurations": [
+    {
+      "name": "Cortex-Debug: m144z-m3 (J-Link)",
+      "type": "cortex-debug",
+      "request": "launch",
+      "servertype": "jlink",
+      "cwd": "${workspaceFolder}",
+      "device": "STM32F103ZE",
+      "interface": "swd",
+
+      "executable": "${workspaceFolder}/nuttx",
+
+      "gdbPath": "/usr/bin/gdb-multiarch",
+      "serverpath": "/usr/local/bin/JLinkGDBServerCLI",
+      "armToolchainPath": "/usr/bin",
+      "toolchainPrefix": "arm-none-eabi",
+      "serverArgs": ["-speed", "4000", "-localhostonly", "1"],
+
+      // 复位/烧录后停在这里 —— 从最开始的 C 启动流程看起。
+      //   __start()  arch/arm/src/common/stm32/stm32_start_m3m4_v1.c:114
+      //     ├─ mpu_early_reset()
+      //     ├─ stm32_clockconfig()     系统时钟/PLL (72MHz)
+      //     ├─ stm32_lowsetup()        基础 UART
+      //     ├─ stm32_gpioinit()
+      //     ├─ 清 .bss / 从 Flash 拷 .data 到 SRAM     ← 之前全局变量是垃圾值
+      //     ├─ arm_earlyserialinit()   串口能 printf 了
+      //     ├─ stm32_boardinitialize() 板级(含 LED 初始化)
+      //     └─ nx_start()              内核初始化 → 创建 init 任务 → nsh_main
+      //
+      // 想停在别处就改这里: "nx_start"(内核入口) / "nsh_main"(你的 main)。
+      // 想停在 __start 的“第一条汇编指令”(prologue 之前),把这行删掉,
+      //   改用 preLaunchCommands 里加  "break *__start"。
+      "runToEntryPoint": "__start",
+
+      "preLaunchCommands": [
+        "set mem inaccessible-by-default off"
+      ],
+
+      // 【F5 launch 全序列】—— 替换 cortex-debug 默认的 halt/download/reset。
+      // 必须自己写 load 来烧录。最后两行 = BOOT0 兜底(从 Flash 向量表取 SP/PC)。
+      "overrideLaunchCommands": [
+        "monitor halt",
+        "load",
+        "monitor reset",
+        "set $sp = {unsigned int}0x08000000",
+        "set $pc = {unsigned int}0x08000004",
+        "flushregs"
+      ],
+      // 【复位按钮 / 重启按钮】—— 同样绕过 bootloader
+      "overrideResetCommands": [
+        "monitor reset",
+        "set $sp = {unsigned int}0x08000000",
+        "set $pc = {unsigned int}0x08000004",
+        "flushregs"
+      ],
+      "overrideRestartCommands": [
+        "monitor reset",
+        "set $sp = {unsigned int}0x08000000",
+        "set $pc = {unsigned int}0x08000004",
+        "flushregs"
+      ],
+
+      // 外设寄存器视图(GPIOB/GPIOE 的 ODR 等)
+      "svdFile": "${workspaceFolder}/.vscode/STM32F103xx.svd",
+
+      // 编译 + 确保 J-Link 已透传进 WSL
+      "preLaunchTask": "Debug: 编译+透传",
+
+      // 排查时改 "raw" 可在 DEBUG CONSOLE 看完整 GDB/J-Link 交互
+      "showDevDebugOutput": "none"
+    },
+
+    // ==================================================================
+    //  备选: 原生 cppdbg + 外部 J-Link GDB Server @ 2331
+    //  (同样带 BOOT0 兜底: postRemoteConnectCommands 里 set sp/pc)
+    // ==================================================================
+    {
+      "name": "cppdbg: m144z-m3 (J-Link @ localhost:2331)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/nuttx",
+      "cwd": "${workspaceFolder}",
+      "args": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb-multiarch",
+      "miDebuggerServerAddress": "localhost:2331",
+      "stopAtConnect": true,
+
+      "setupCommands": [
+        { "text": "set pagination off", "ignoreFailures": true },
+        { "text": "set mem inaccessible-by-default off", "ignoreFailures": true },
+        // 变量 / 数值默认按十六进制显示
+        { "text": "set output-radix 16", "ignoreFailures": true },
+        { "text": "-file-symbol-file ${workspaceFolder}/nuttx", "ignoreFailures": true },
+        { "text": "source ${workspaceFolder}/tools/pynuttx/gdbinit.py", "ignoreFailures": true }
+      ],
+
+      "postRemoteConnectCommands": [
+        { "text": "monitor halt", "ignoreFailures": true },
+        { "text": "load ${workspaceFolder}/nuttx", "ignoreFailures": true },
+        { "text": "monitor reset", "ignoreFailures": true },
+        { "text": "set $sp = {unsigned int}0x08000000", "ignoreFailures": true },
+        { "text": "set $pc = {unsigned int}0x08000004", "ignoreFailures": true },
+        { "text": "flushregs", "ignoreFailures": true },
+        { "text": "tbreak __start", "ignoreFailures": true },
+        { "text": "-exec-continue", "ignoreFailures": true }
+      ],
+
+      "preLaunchTask": "Debug: 构建并启动 GDB Server",
+      "postDebugTask": "J-Link: 停止 GDB Server",
+      "logging": { "engineLogging": false }
+    }
+  ]
+}

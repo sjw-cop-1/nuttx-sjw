@@ -1,0 +1,116 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    // ======================= 镜像同步(原有,保持不动) =======================
+    {
+      "label": "镜像: 查看同步状态",
+      "type": "shell",
+      "command": "bash ~/bin/mirror-status.sh",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "runOptions": { "runOn": "folderOpen" }
+    },
+    {
+      "label": "镜像: 立即同步",
+      "type": "shell",
+      "command": "bash ~/bin/nuttx-mirror-sync.sh && bash ~/bin/mirror-status.sh",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "镜像: 启动守护",
+      "type": "shell",
+      "command": "setsid nohup bash ~/bin/nuttx-mirror-watch.sh > /dev/null 2>&1 & sleep 1 && bash ~/bin/mirror-status.sh",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "镜像: 重启守护",
+      "type": "shell",
+      "command": "if [ -f ~/bin/nuttx-mirror-watch.pid ] && kill -0 $(cat ~/bin/nuttx-mirror-watch.pid) 2>/dev/null; then kill $(cat ~/bin/nuttx-mirror-watch.pid); sleep 1; fi; setsid nohup bash ~/bin/nuttx-mirror-watch.sh > /dev/null 2>&1 & sleep 1 && bash ~/bin/mirror-status.sh",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+
+    // ============================ 编译 NuttX ============================
+    {
+      // F5 的 preLaunchTask 会用到它;编译失败 -> 非零退出 -> 配合
+      // settings.json 的 "debug.onTaskErrors": "abort" 直接阻止调试启动
+      "label": "NuttX: 编译",
+      "type": "shell",
+      "command": "make -j$(nproc)",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      // $gcc 匹配 arm-none-eabi-gcc 的 error/warning,点击可跳转
+      "problemMatcher": ["$gcc"],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      // 生成 compile_commands.json 供 IntelliSense 跳转内核源码
+      // 只需在第一次配置后 / 大改 Kconfig 后跑一次
+      "label": "NuttX: 生成 compile_commands.json",
+      "type": "shell",
+      "command": "make clean >/dev/null; bear --output ${workspaceFolder}/compile_commands.json -- make -j$(nproc)",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+
+    // ===================== J-Link GDB Server (WSL 内) =====================
+    {
+      // 确保 J-Link 已从 Windows 透传进 WSL(usbip)。幂等:已透传则秒退。
+      // 失败时非零退出 -> 配合 debug.onTaskErrors=abort, F5 直接中止,
+      // 不会去启动一个必然连不上的 GDB Server。
+      "label": "J-Link: 确保透传",
+      "type": "shell",
+      "command": "bash ~/bin/jlink-attach.sh",
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "dedicated", "clear": true }
+    },
+    {
+      // 后台常驻;beginsPattern/endsPattern 让 VS Code 知道"起好了"再继续
+      "label": "J-Link: 启动 GDB Server",
+      "type": "shell",
+      "isBackground": true,
+      "command": "pkill -f JLinkGDBServerCLI 2>/dev/null; sleep 1; exec JLinkGDBServerCLI -device STM32F103ZE -if SWD -speed 4000 -port 2331 -localhostonly 1 -singlerun -nogui -silent",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "silent", "panel": "dedicated", "clear": true },
+      "problemMatcher": {
+        "pattern": [{ "regexp": "^\\s*$", "file": 1, "location": 2, "message": 3 }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*(Connecting to J-Link|SEGGER J-Link GDB Server).*",
+          "endsPattern": ".*(Waiting for GDB connection|Listening on TCP/IP port).*"
+        }
+      }
+    },
+    {
+      "label": "J-Link: 停止 GDB Server",
+      "type": "shell",
+      "command": "pkill -f JLinkGDBServerCLI 2>/dev/null; echo 'J-Link GDB Server 已停止'",
+      "presentation": { "reveal": "silent", "panel": "dedicated", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      // 只烧录不调试(用你已有的脚本)
+      "label": "NuttX: 编译并烧录 (J-Link)",
+      "type": "shell",
+      "command": "make -j$(nproc) && bash /mnt/d/AI/STM32F103ZET6-MINI-SYS/Nuttx_DEMO/debug/run_flash.sh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$gcc"],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+
+    // ==================== 复合任务(F5 的 preLaunchTask) ====================
+    {
+      // Cortex-Debug 版:它自己会拉 GDB Server,这里只要"编译 + 确保 J-Link 在线"
+      "label": "Debug: 编译+透传",
+      "dependsOrder": "sequence",
+      "dependsOn": ["NuttX: 编译", "J-Link: 确保透传"],
+      "problemMatcher": []
+    },
+    {
+      // cppdbg 版:编译 -> 确保透传 -> 拉起本地 2331 GDB Server
+      "label": "Debug: 构建并启动 GDB Server",
+      "dependsOrder": "sequence",
+      "dependsOn": ["NuttX: 编译", "J-Link: 确保透传", "J-Link: 启动 GDB Server"],
+      "problemMatcher": []
+    }
+  ]
+}
