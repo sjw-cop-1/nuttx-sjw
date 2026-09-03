@@ -25,6 +25,7 @@
 | 16 | 16_LED跑马灯实操.md | 手动改配置 + 自写 marquee App，让 PB5/PE5 跑马灯 |
 | 17 | 17_代码固化烧录教程.md | 把固件写进片内 Flash + BOOT0 设置，让代码上电自启（不依赖调试器） |
 | 18 | 18_双任务与NSH任务管理.md | 在 examples/ 下建两个独立任务，学 NSH 如何统一管理与切换（builtin→task_spawn、& / ps / kill）、串口实时调参 |
+| 19 | 19_极简NuttX裁剪实战.md | 动手实验：量化每个 CONFIG 的体积代价，把 123KB 砍到 40KB 级，两套 defconfig 并存 |
 
 ## 建议阅读顺序
 
