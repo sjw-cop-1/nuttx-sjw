@@ -699,7 +699,250 @@ nsh> help          # 命令列表变了 = 固件确实换了
 
 ---
 
-## 8. 其它练习
+## 8. 自动切换：`marquee → mqtune → marquee → …`
+
+手动敲命令切换太累。要让它自己循环，**该建什么文件？** 两条路：
+
+| 方案 | 需要的文件 | 本板可行性 |
+|---|---|---|
+| **A. 写第三个 example 当"监工"** | `apps/examples/ledsw/` 四件套 | ✅ **推荐**，不用改任何现有配置 |
+| B. NSH 脚本 + `while` 循环 | ROMFS 里的脚本文件 | ❌ 本板缺三样东西，见 8.4 |
+
+### 8.1 方案 A 的思路：supervisor（监工进程）
+
+新 example **`ledsw`** 自己**一个 LED 都不碰**，它做的事和你手动敲命令完全一样：
+
+```
+        你手动敲                        ledsw 内部
+   nsh> marquee            <-->   exec_builtin("marquee", {"marquee", NULL})
+   nsh> marquee stop       <-->   exec_builtin("marquee", {"marquee","stop",NULL})
+   nsh> mqtune 80 600      <-->   exec_builtin("mqtune",  {"mqtune","80","600",NULL})
+```
+
+`exec_builtin()` 正是 **NSH 自己**用来启动内建命令的那个函数
+（`apps/builtin/exec_builtin.c`，NSH 的 `nsh_builtin.c` 也是调它）。
+
+所以 **marquee / mqtune 一行代码都不用改**，它们根本不知道有人在遥控自己。
+这就是 Unix 里的 supervisor 模式：**干活的进程保持简单，另起一个进程编排它们的生命周期。**
+
+```
+              ┌──────────────┐
+   nsh> ledsw │   ledsw      │  监工，不碰硬件
+              │  while(!stop)│
+              └──┬────────┬──┘
+   exec_builtin()│        │exec_builtin()
+                 ▼        ▼
+           ┌─────────┐  ┌─────────┐
+           │ marquee │  │ mqtune  │   各自独立，互不知情
+           └────┬────┘  └────┬────┘
+                └─────┬──────┘
+                      ▼
+                /dev/userleds
+```
+
+### 8.2 核心代码
+
+**像 NSH 一样执行一条内建命令**：
+
+```c
+#include <builtin/builtin.h>
+
+static int run_cmd(const char *name, const char *a1, const char *a2)
+{
+  FAR char *argv[4];
+  int argc = 0;
+
+  argv[argc++] = (FAR char *)name;     /* ★ argv[0] 必须是命令名本身 */
+  if (a1) argv[argc++] = (FAR char *)a1;
+  if (a2) argv[argc++] = (FAR char *)a2;
+  argv[argc] = NULL;                   /* ★ 必须 NULL 结尾 */
+
+  return exec_builtin(name, argv, NULL) < 0 ? -1 : 0;
+}
+```
+
+**一个阶段 = 启动 → 等 N 秒 → 停止**：
+
+```c
+static bool run_phase(const char *name, const char *a1, const char *a2)
+{
+  run_cmd(name, a1, a2);
+  g_current = name;
+
+  if (!wait_ms(g_period * 1000))     /* 可打断的等待 */
+    {
+      stop_current();
+      return false;                  /* 中途收到 ledsw stop */
+    }
+
+  stop_current();
+  return true;
+}
+```
+
+**主循环**：
+
+```c
+  while (!g_stopreq)
+    {
+      if (!run_phase("marquee", NULL, NULL))  break;   /* 固定节奏  */
+      if (!run_phase("mqtune", "80", "600"))  break;   /* 不对称节奏 */
+    }
+```
+
+### 8.3 三个容易踩的细节
+
+**① `stop` 是异步的，切换之间要留缓冲**
+
+`marquee stop` 只是把 `g_stopreq` 置 true 就返回了，对方的循环最多要
+`SLICE_MS`(20ms) 才真正退出、熄灯。如果紧接着就启动 mqtune，
+对方还没释放，会看到"已经在跑了"。所以：
+
+```c
+#define SETTLE_MS 150
+
+static void stop_current(void)
+{
+  if (g_current)
+    {
+      run_cmd(g_current, "stop", NULL);
+      usleep(SETTLE_MS * 1000);      /* ★ 等它真退出 */
+      g_current = NULL;
+    }
+}
+```
+
+**② 等待必须可打断**
+
+`sleep(5)` 的话，敲 `ledsw stop` 最坏要等 5 秒。同样切片：
+
+```c
+static bool wait_ms(int ms)
+{
+  int left = ms;
+  while (left > 0)
+    {
+      int slice;
+      if (g_stopreq) return false;
+      slice = (left > SLICE_MS) ? SLICE_MS : left;   /* SLICE_MS = 100 */
+      usleep(slice * 1000);
+      left -= slice;
+    }
+  return !g_stopreq;
+}
+```
+
+**③ 启动前 / 退出时都要清场**
+
+```c
+  /* 启动前：把可能残留在跑的都停掉，保证从干净状态开始 */
+  run_cmd("marquee", "stop", NULL);
+  run_cmd("mqtune",  "stop", NULL);
+  usleep(SETTLE_MS * 1000);
+
+  ... while 循环 ...
+
+  /* 退出时：确保两个 demo 都停了，别留个灯亮着 */
+  stop_current();
+  run_cmd("marquee", "stop", NULL);
+  run_cmd("mqtune",  "stop", NULL);
+```
+
+另外 `ledsw` 自己也用了和 marquee/mqtune 一样的 `worker_alive()` 自愈
+（见 §6.5），被 Ctrl-C 硬杀后不会卡死。
+
+### 8.4 方案 B：NSH 脚本 —— 本板暂时走不通
+
+理想中是这样：
+
+```sh
+# /etc/init.d/ledloop
+while true
+do
+  marquee &
+  sleep 5
+  marquee stop
+  mqtune 80 600 &
+  sleep 5
+  mqtune stop
+done
+```
+
+但本板当前配置缺三样：
+
+```
+CONFIG_NSH_DISABLE_LOOPS=y      ← 没有 while/until
+CONFIG_NSH_DISABLE_SOURCE=y     ← 没有 source/. 命令
+# CONFIG_FS_ROMFS is not set    ← 没有文件系统，脚本没地方放
+```
+
+要走这条路得补齐：
+
+```bash
+kconfig-tweak --disable CONFIG_NSH_DISABLE_LOOPS
+kconfig-tweak --disable CONFIG_NSH_DISABLE_SOURCE
+kconfig-tweak --enable  CONFIG_FS_ROMFS
+kconfig-tweak --enable  CONFIG_NSH_ROMFSETC      # 把 /etc 做成 romfs 编进固件
+make olddefconfig && make clean && make -j$(nproc)
+```
+
+还要用 `tools/mkromfsimg.sh` 把脚本打包成 romfs 镜像。
+**代价明显更大**，而且脚本能力有限（NSH 不是 bash）。
+所以本工程选方案 A。
+
+### 8.5 建的文件清单
+
+和前两个 example 一样的四件套，一个都不少：
+
+```
+apps/examples/ledsw/
+├── Kconfig          # config EXAMPLES_LEDSW，depends on EXAMPLES_MARQUEE && EXAMPLES_MQTUNE && BUILTIN
+├── Make.defs        # CONFIGURED_APPS += $(APPDIR)/examples/ledsw
+├── Makefile         # PROGNAME/PRIORITY/STACKSIZE + MAINSRC = ledsw_main.c
+└── ledsw_main.c     # supervisor 主体
+```
+
+`Kconfig` 里的 `depends on` 很关键 —— 少了任何一个被监工的 example，
+`ledsw` 就没意义，让 menuconfig 直接把它灰掉。
+
+```bash
+cd /home/nuttx/nuttxspace/apps/examples
+bash ../tools/mkkconfig.sh -m "Examples"        # 新建 example 必做(见 §3.5)
+cd ../../nuttx
+kconfig-tweak --enable CONFIG_EXAMPLES_LEDSW
+make olddefconfig && make clean && make -j$(nproc)
+bash ~/bin/nuttx-flash.sh --no-build
+```
+
+### 8.6 用法
+
+```
+nsh> ledsw &            后台自动循环, 每段 5 秒
+ledsw: 启动自动切换, 每段 5 秒. 停止: ledsw stop
+ledsw: --> marquee
+ledsw: --> mqtune
+ledsw: --> marquee
+...
+
+nsh> ledsw 3 &          每段 3 秒
+nsh> ledsw status
+nsh> ledsw stop         停止, 并把当前 demo 一起停掉
+nsh> ps                 确认三个任务都没了
+```
+
+| 命令 | 作用 |
+|---|---|
+| `ledsw &` | 后台自动循环（每段秒数取 Kconfig 默认） |
+| `ledsw <秒> &` | 指定每段多少秒（1..600） |
+| `ledsw stop` | 停止调度并停掉当前 demo |
+| `ledsw status` | 状态 + 当前跑的是哪个 |
+
+> 手动模式完全不受影响：`ledsw stop` 之后照样可以单独 `marquee &` / `mqtune 50 800 &`。
+
+
+---
+
+## 9. 其它练习
 
 1. 再加第三个 example `mqoff`，只熄灯不管任务 —— 复习"新建 example 四件套"。
 2. 给 `mqtune` 加 `-r` 反向参数（先 LED1 再 LED0）。
